@@ -172,7 +172,7 @@ export async function addAgent(
     content = await fetchFileContent(agentPath);
   } else if (isUrl(sourceDir)) {
     // Relative path against a URL base → construct full URL
-    const fullUrl = `${sourceDir}/${agentPath}`.replace(/\/tree\//, "/blob/");
+    const fullUrl = `${sourceDir}/${agentPath.replace(/^\.\//,  "")}`.replace(/\/tree\//, "/blob/");
     content = await fetchFileContent(fullUrl);
   } else {
     const absoluteAgentPath = resolve(sourceDir, agentPath);

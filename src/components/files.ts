@@ -28,7 +28,7 @@ export async function addFile(
     content = await fetchFileContent(mapping.source);
   } else if (isUrl(sourceDir)) {
     // Relative path against a URL base
-    const fullUrl = `${sourceDir}/${mapping.source}`.replace(/\/tree\//, "/blob/");
+    const fullUrl = `${sourceDir}/${mapping.source.replace(/^\.\//,  "")}`.replace(/\/tree\//, "/blob/");
     content = await fetchFileContent(fullUrl);
   } else {
     // Local path

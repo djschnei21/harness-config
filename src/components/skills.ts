@@ -61,9 +61,10 @@ export async function addSkill(
     absoluteSkillPath = await fetchDirectoryToTemp(skillPath);
   } else if (isUrl(sourceDir)) {
     // Relative path against a URL base → construct GitHub tree URL
+    const normalizedPath = skillPath.replace(/^\.\//, "");
     const fullUrl = sourceDir.includes("/tree/")
-      ? `${sourceDir}/${skillPath}`
-      : `${sourceDir}/tree/main/${skillPath}`;
+      ? `${sourceDir}/${normalizedPath}`
+      : `${sourceDir}/tree/main/${normalizedPath}`;
     absoluteSkillPath = await fetchDirectoryToTemp(fullUrl);
   } else {
     absoluteSkillPath = resolve(sourceDir, skillPath);

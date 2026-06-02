@@ -57,12 +57,19 @@ export function parseGitHubUrl(url: string): {
 
 /**
  * Fetch a single file from a URL. Returns the content as a string.
+ * Uses GH_TOKEN/GITHUB_TOKEN for authenticated access to private repos.
  */
 export async function fetchFileContent(url: string): Promise<string> {
   const parsed = parseGitHubUrl(url);
   const fetchUrl = parsed.rawUrl ?? url;
 
-  const response = await fetch(fetchUrl);
+  const headers: Record<string, string> = {};
+  const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+  if (token && fetchUrl.includes("raw.githubusercontent.com")) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  const response = await fetch(fetchUrl, { headers });
   if (!response.ok) {
     throw new Error(`Failed to fetch ${fetchUrl}: ${response.status} ${response.statusText}`);
   }
