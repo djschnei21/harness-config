@@ -30,17 +30,17 @@ clean:
 release-patch: check
 	npm version patch
 	git push --follow-tags
-	npm publish
+	npm publish --access public
 
 release-minor: check
 	npm version minor
 	git push --follow-tags
-	npm publish
+	npm publish --access public
 
 release-major: check
 	npm version major
 	git push --follow-tags
-	npm publish
+	npm publish --access public
 
 # Alias: release defaults to patch
 release: release-patch
