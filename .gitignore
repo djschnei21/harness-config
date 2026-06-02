@@ -1,0 +1,13 @@
+node_modules
+dist
+*.tgz
+.DS_Store
+
+# Test artifacts
+.claude
+.agent
+.mcp.json
+opencode.json
+.github/copilot
+.cursor
+.windsurf

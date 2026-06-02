@@ -1,0 +1,18 @@
+name: my-project
+description: AI coding setup for my-project
+
+harnesses: [claude, opencode, copilot, pi]
+
+mcps:
+  github:
+    url: https://api.githubcopilot.com/mcp/
+    auth: env:GH_TOKEN
+
+  fetch:
+    stdio: "npx -y @anthropic/mcp-fetch"
+
+agents:
+  - ./agents/architect.md
+
+skills:
+  - ./skills/code-review
