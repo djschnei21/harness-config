@@ -1,6 +1,36 @@
 import { mkdtemp, writeFile, mkdir } from "node:fs/promises";
+import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, basename, dirname } from "node:path";
+
+/**
+ * Resolve a GitHub token from environment variables or the gh CLI.
+ * Checks GH_TOKEN, GITHUB_TOKEN, then falls back to `gh auth token`.
+ * Result is cached for the lifetime of the process.
+ */
+let _cachedGitHubToken: string | null | undefined;
+export function getGitHubToken(): string | null {
+  if (_cachedGitHubToken !== undefined) return _cachedGitHubToken;
+
+  const envToken = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+  if (envToken) {
+    _cachedGitHubToken = envToken;
+    return envToken;
+  }
+
+  try {
+    const token = execSync("gh auth token", { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }).trim();
+    if (token) {
+      _cachedGitHubToken = token;
+      return token;
+    }
+  } catch {
+    // gh CLI not installed or not authenticated
+  }
+
+  _cachedGitHubToken = null;
+  return null;
+}
 
 /**
  * Check if a string is a URL (starts with http:// or https://).
@@ -57,14 +87,14 @@ export function parseGitHubUrl(url: string): {
 
 /**
  * Fetch a single file from a URL. Returns the content as a string.
- * Uses GH_TOKEN/GITHUB_TOKEN for authenticated access to private repos.
+ * Uses GitHub token (env vars or gh CLI) for authenticated access to private repos.
  */
 export async function fetchFileContent(url: string): Promise<string> {
   const parsed = parseGitHubUrl(url);
   const fetchUrl = parsed.rawUrl ?? url;
 
   const headers: Record<string, string> = {};
-  const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+  const token = getGitHubToken();
   if (token && fetchUrl.includes("raw.githubusercontent.com")) {
     headers["Authorization"] = `Bearer ${token}`;
   }
@@ -124,8 +154,8 @@ async function fetchGitHubTreeToTemp(
     "User-Agent": "harness-config",
   };
 
-  // Use GH_TOKEN or GITHUB_TOKEN if available for rate limits
-  const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+  // Use GitHub token (env vars or gh CLI) for auth and rate limits
+  const token = getGitHubToken();
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
   }

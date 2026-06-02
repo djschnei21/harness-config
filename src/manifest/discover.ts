@@ -2,7 +2,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import yaml from "js-yaml";
 import { manifestSchema } from "./schema.ts";
-import { isUrl, parseGitHubUrl } from "../util/fetch.ts";
+import { isUrl, parseGitHubUrl, getGitHubToken } from "../util/fetch.ts";
 
 export interface DiscoveredManifest {
   /** Display name from the manifest */
@@ -98,7 +98,7 @@ export async function discoverManifestsInGitHub(url: string): Promise<Discovered
     Accept: "application/vnd.github.v3+json",
     "User-Agent": "harness-config",
   };
-  const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+  const token = getGitHubToken();
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
   }
