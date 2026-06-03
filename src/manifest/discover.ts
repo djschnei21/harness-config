@@ -2,7 +2,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import yaml from "js-yaml";
 import { manifestSchema } from "./schema.ts";
-import { isUrl, parseGitHubUrl, getGitHubToken } from "../util/fetch.ts";
+import { isUrl, parseGitHubUrl, getGitHubToken, fetchFileContent } from "../util/fetch.ts";
 
 export interface DiscoveredManifest {
   /** Display name from the manifest */
@@ -103,6 +103,17 @@ export async function discoverManifestsInGitHub(url: string): Promise<Discovered
     headers["Authorization"] = `Bearer ${token}`;
   }
 
+  // Resolve default branch if ref wasn't specified in the URL
+  if (ref === "main" && !parsed.ref) {
+    const repoApiUrl = `https://api.github.com/repos/${user}/${repo}`;
+    const repoResponse = await fetch(repoApiUrl, { headers });
+    if (!repoResponse.ok) {
+      throw new Error(`GitHub API error: ${repoResponse.status} ${repoResponse.statusText}`);
+    }
+    const repoData = (await repoResponse.json()) as { default_branch: string };
+    ref = repoData.default_branch;
+  }
+
   // List files via Trees API
   const apiUrl = `https://api.github.com/repos/${user}/${repo}/git/trees/${ref}?recursive=1`;
   const response = await fetch(apiUrl, { headers });
@@ -130,9 +141,7 @@ export async function discoverManifestsInGitHub(url: string): Promise<Discovered
   for (const candidate of candidates) {
     const rawUrl = `https://raw.githubusercontent.com/${user}/${repo}/${ref}/${candidate.path}`;
     try {
-      const response = await fetch(rawUrl, { headers: { "User-Agent": "harness-config" } });
-      if (!response.ok) continue;
-      const content = await response.text();
+      const content = await fetchFileContent(rawUrl);
       const raw = yaml.load(content);
       if (!raw || typeof raw !== "object") continue;
 

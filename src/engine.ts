@@ -89,9 +89,13 @@ export async function executeAdd(
       }
     }
 
-    // --- Skills (universal) ---
-    for (const skillPath of manifest.skills) {
-      const skillResult = await addSkill(adapter, skillPath, options.scope, sourceDir, options.cwd);
+    // --- Skills (universal) — fetch all concurrently ---
+    const skillResults = await Promise.all(
+      manifest.skills.map((skillPath) => addSkill(adapter, skillPath, options.scope, sourceDir, options.cwd)),
+    );
+    for (let i = 0; i < manifest.skills.length; i++) {
+      const skillPath = manifest.skills[i];
+      const skillResult = skillResults[i];
       const skillItem: ItemResult = {
         name: basename(skillPath),
         path: skillResult.installed,
@@ -130,8 +134,12 @@ export async function executeAdd(
 
       // Harness-specific skills
       if (harnessConfig.skills) {
-        for (const skillPath of harnessConfig.skills) {
-          const skillResult = await addSkill(adapter, skillPath, options.scope, sourceDir, options.cwd);
+        const harnessSkillResults = await Promise.all(
+          harnessConfig.skills.map((skillPath) => addSkill(adapter, skillPath, options.scope, sourceDir, options.cwd)),
+        );
+        for (let i = 0; i < harnessConfig.skills.length; i++) {
+          const skillPath = harnessConfig.skills[i];
+          const skillResult = harnessSkillResults[i];
           const skillItem: ItemResult = {
             name: basename(skillPath),
             path: skillResult.installed,

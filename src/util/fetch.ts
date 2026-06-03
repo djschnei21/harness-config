@@ -138,8 +138,62 @@ export async function fetchDirectoryToTemp(url: string): Promise<string> {
 }
 
 /**
- * Fetch a GitHub tree (subdirectory) using the API's tarball endpoint + extraction.
- * Falls back to recursive file listing via the Git Trees API.
+ * Cache for GitHub tree API responses to avoid redundant requests
+ * when multiple skills come from the same repo+ref.
+ */
+const _treeCache = new Map<string, Promise<Array<{ path: string; type: string; url: string }>>>();
+
+/**
+ * Fetch (or return cached) the full recursive tree for a repo+ref.
+ */
+function getGitHubTree(
+  user: string,
+  repo: string,
+  ref: string,
+): Promise<Array<{ path: string; type: string; url: string }>> {
+  const cacheKey = `${user}/${repo}@${ref}`;
+  const cached = _treeCache.get(cacheKey);
+  if (cached) return cached;
+
+  const promise = (async () => {
+    const apiUrl = `https://api.github.com/repos/${user}/${repo}/git/trees/${ref}?recursive=1`;
+    const headers: Record<string, string> = {
+      Accept: "application/vnd.github.v3+json",
+      "User-Agent": "harness-config",
+    };
+
+    const token = getGitHubToken();
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+
+    const response = await fetch(apiUrl, { headers });
+    if (!response.ok) {
+      throw new Error(
+        `GitHub API error fetching tree for ${user}/${repo}@${ref}: ${response.status} ${response.statusText}`,
+      );
+    }
+
+    const data = (await response.json()) as {
+      tree: Array<{ path: string; type: string; url: string }>;
+    };
+    return data.tree;
+  })();
+
+  _treeCache.set(cacheKey, promise);
+  return promise;
+}
+
+/**
+ * Clear the tree cache (useful for testing).
+ */
+export function clearTreeCache(): void {
+  _treeCache.clear();
+}
+
+/**
+ * Fetch a GitHub tree (subdirectory) using the Git Trees API.
+ * Caches the tree listing per repo+ref and fetches files concurrently.
  */
 async function fetchGitHubTreeToTemp(
   user: string,
@@ -147,33 +201,11 @@ async function fetchGitHubTreeToTemp(
   ref: string,
   treePath: string,
 ): Promise<string> {
-  // Use the Git Trees API to list files, then fetch each one
-  const apiUrl = `https://api.github.com/repos/${user}/${repo}/git/trees/${ref}?recursive=1`;
-  const headers: Record<string, string> = {
-    Accept: "application/vnd.github.v3+json",
-    "User-Agent": "harness-config",
-  };
-
-  // Use GitHub token (env vars or gh CLI) for auth and rate limits
-  const token = getGitHubToken();
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
-
-  const response = await fetch(apiUrl, { headers });
-  if (!response.ok) {
-    throw new Error(
-      `GitHub API error fetching tree for ${user}/${repo}@${ref}: ${response.status} ${response.statusText}`,
-    );
-  }
-
-  const data = (await response.json()) as {
-    tree: Array<{ path: string; type: string; url: string }>;
-  };
+  const tree = await getGitHubTree(user, repo, ref);
 
   // Filter to files under the target path
   const prefix = treePath.endsWith("/") ? treePath : `${treePath}/`;
-  const files = data.tree.filter(
+  const files = tree.filter(
     (entry) =>
       entry.type === "blob" &&
       (entry.path === treePath || entry.path.startsWith(prefix)),
@@ -183,21 +215,23 @@ async function fetchGitHubTreeToTemp(
     throw new Error(`No files found at path "${treePath}" in ${user}/${repo}@${ref}`);
   }
 
-  // Create temp directory and fetch each file
+  // Create temp directory and fetch all files concurrently
   const tmpDir = await mkdtemp(join(tmpdir(), "harness-config-skill-"));
   const destDir = join(tmpDir, basename(treePath));
   await mkdir(destDir, { recursive: true });
 
-  for (const file of files) {
-    const relativePath = file.path.startsWith(prefix)
-      ? file.path.slice(prefix.length)
-      : basename(file.path);
-    const rawUrl = `https://raw.githubusercontent.com/${user}/${repo}/${ref}/${file.path}`;
-    const content = await fetchFileContent(rawUrl);
-    const destPath = join(destDir, relativePath);
-    await mkdir(dirname(destPath), { recursive: true });
-    await writeFile(destPath, content, "utf-8");
-  }
+  await Promise.all(
+    files.map(async (file) => {
+      const relativePath = file.path.startsWith(prefix)
+        ? file.path.slice(prefix.length)
+        : basename(file.path);
+      const rawUrl = `https://raw.githubusercontent.com/${user}/${repo}/${ref}/${file.path}`;
+      const content = await fetchFileContent(rawUrl);
+      const destPath = join(destDir, relativePath);
+      await mkdir(dirname(destPath), { recursive: true });
+      await writeFile(destPath, content, "utf-8");
+    }),
+  );
 
   return destDir;
 }
