@@ -11,3 +11,6 @@ opencode.json
 .github/copilot
 .cursor
 .windsurf
+
+# Fixture target directories
+fixtures/*/targetdir/

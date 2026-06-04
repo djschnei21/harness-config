@@ -1,8 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { claude } from "../src/harnesses/claude.ts";
 import { opencode } from "../src/harnesses/opencode.ts";
 import { copilot } from "../src/harnesses/copilot.ts";
 import { pi } from "../src/harnesses/pi.ts";
+import { isHarnessDetected, isBinaryInstalled, clearDetectionCache } from "../src/harnesses/index.ts";
 import type { McpDef } from "../src/manifest/schema.ts";
 
 describe("harness MCP translation", () => {
@@ -157,5 +158,78 @@ describe("harness config paths", () => {
   it("Pi skill dir is .pi/skills", () => {
     expect(pi.skillDir("project")).toContain(".pi");
     expect(pi.skillDir("project")).toContain("skills");
+  });
+});
+
+describe("harness detection", () => {
+  beforeEach(() => {
+    clearDetectionCache();
+  });
+
+  afterEach(() => {
+    clearDetectionCache();
+    vi.restoreAllMocks();
+  });
+
+  describe("binaryNames configuration", () => {
+    it("Claude checks for 'claude' binary", () => {
+      expect(claude.binaryNames).toEqual(["claude"]);
+    });
+
+    it("Pi checks for 'pi' binary", () => {
+      expect(pi.binaryNames).toEqual(["pi"]);
+    });
+
+    it("OpenCode checks for 'opencode' binary", () => {
+      expect(opencode.binaryNames).toEqual(["opencode"]);
+    });
+
+    it("Copilot checks for 'copilot' OR 'code' binary", () => {
+      expect(copilot.binaryNames).toEqual(["copilot", "code"]);
+    });
+  });
+
+  describe("isBinaryInstalled", () => {
+    it("returns true for a binary that exists (node)", () => {
+      // 'node' is guaranteed to be available in test environment
+      expect(isBinaryInstalled("node")).toBe(true);
+    });
+
+    it("returns false for a binary that does not exist", () => {
+      expect(isBinaryInstalled("__nonexistent_binary_xyz__")).toBe(false);
+    });
+
+    it("caches results across calls", () => {
+      const result1 = isBinaryInstalled("node");
+      const result2 = isBinaryInstalled("node");
+      expect(result1).toBe(result2);
+    });
+
+    it("cache is cleared by clearDetectionCache", () => {
+      isBinaryInstalled("node");
+      clearDetectionCache();
+      // After clearing, it should still work (just re-executes)
+      expect(isBinaryInstalled("node")).toBe(true);
+    });
+  });
+
+  describe("isHarnessDetected", () => {
+    it("returns true if any binaryName is found", () => {
+      // Create a mock adapter with 'node' as a binary (always available)
+      const mockAdapter = { ...claude, binaryNames: ["__missing__", "node"] };
+      expect(isHarnessDetected(mockAdapter)).toBe(true);
+    });
+
+    it("returns false if no binaryNames are found", () => {
+      const mockAdapter = { ...claude, binaryNames: ["__missing_a__", "__missing_b__"] };
+      expect(isHarnessDetected(mockAdapter)).toBe(false);
+    });
+
+    it("is not scope-aware (no scope/cwd parameters)", () => {
+      // The function signature only takes an adapter — verify it works
+      // without scope or cwd arguments
+      const mockAdapter = { ...claude, binaryNames: ["node"] };
+      expect(isHarnessDetected(mockAdapter)).toBe(true);
+    });
   });
 });

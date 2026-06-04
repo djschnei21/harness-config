@@ -1,0 +1,50 @@
+name: ux-test
+description: Test manifest exercising the UX redesign features
+
+# Supported harnesses — only claude and pi are "officially" supported.
+# OpenCode and Copilot are NOT declared, so they'll show as (unsupported) in the picker.
+harnesses:
+  claude:
+    agents:
+      - ./claude-agents/debugger.md
+    rules:
+      - ./rules/coding-standards.md
+  pi:
+    skills:
+      - ./skills/debugging
+
+# Universal MCPs — installed to ALL selected harnesses
+mcps:
+  github:
+    url: https://api.githubcopilot.com/mcp/
+    auth: env:GH_TOKEN
+
+  fetch:
+    stdio: "npx -y @anthropic/mcp-fetch"
+
+# Universal skills — installed to ALL selected harnesses
+skills:
+  - ./skills/debugging
+
+# Universal agents — installed to ALL selected harnesses, with per-harness overrides
+agents:
+  # Simple agent: no overrides, copied as-is
+  - ./agents/reviewer.md
+
+  # Agent with per-harness frontmatter overrides
+  - source: ./agents/architect.md
+    claude:
+      model: sonnet
+      tools:
+        - Read
+        - Grep
+        - Glob
+        - Bash
+      effort: high
+    pi:
+      model: anthropic/claude-sonnet-4
+      thinking: high
+      max_turns: 30
+    opencode:
+      model: anthropic/claude-sonnet-4-20250514
+      steps: 30

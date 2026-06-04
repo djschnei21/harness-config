@@ -6,6 +6,7 @@ import { readJsonFile } from "./util/json.ts";
 import { toKebabCase, deriveSkillName } from "./components/skills.ts";
 import { isUrl } from "./util/fetch.ts";
 import { needsKeychainWrapper } from "./keychain/resolve.ts";
+import { mergeAgentOverrides } from "./util/frontmatter.ts";
 import { getWrapperPath } from "./keychain/wrappers.ts";
 
 export type PlanAction = "add" | "remove" | "update" | "noop";
@@ -16,6 +17,7 @@ export interface PlanItem {
   destination: string;
   action: PlanAction;
   reason?: string; // for noop: "unchanged" or "not found"
+  overrideKeys?: string[]; // for agents with frontmatter overrides: keys being merged
 }
 
 export interface HarnessPlan {
@@ -41,7 +43,7 @@ export async function buildPlan(
 
   for (const harnessName of targetHarnesses) {
     const adapter = getHarness(harnessName);
-    const detected = isHarnessDetected(adapter, scope, cwd);
+    const detected = isHarnessDetected(adapter);
     const items: PlanItem[] = [];
 
     // --- MCPs ---
@@ -87,6 +89,72 @@ export async function buildPlan(
     for (const skillPath of manifest.skills) {
       const item = await planSkillItem(adapter, skillPath, command, scope, sourceDir, cwd);
       items.push(item);
+    }
+
+    // --- Universal Agents ---
+    for (const agent of manifest.agents ?? []) {
+      const agentDir = adapter.agentDir(scope);
+      const agentPath = agent.source;
+      if (!agentDir) {
+        items.push({
+          type: "agent",
+          name: basename(agentPath, ".md"),
+          destination: "",
+          action: "noop",
+          reason: "not supported",
+        });
+        continue;
+      }
+
+      const filename = basename(agentPath).endsWith(".md")
+        ? basename(agentPath)
+        : `${basename(agentPath)}.md`;
+      const destPath = resolve(cwd, agentDir, filename);
+      const destination = join(agentDir, filename);
+      const isPresent = await fileExists(destPath);
+
+      if (command === "rm") {
+        items.push({
+          type: "agent",
+          name: basename(agentPath, ".md"),
+          destination,
+          action: isPresent ? "remove" : "noop",
+          reason: isPresent ? undefined : "not found",
+        });
+      } else {
+        let action: PlanAction = "add";
+        if (isPresent && !isUrl(agentPath) && !isUrl(sourceDir)) {
+          const srcPath = resolve(sourceDir, agentPath);
+          const overrides = agent.overrides.get(harnessName);
+          if (overrides && Object.keys(overrides).length > 0) {
+            // Compare merged content to installed file
+            try {
+              const srcContent = await readFile(srcPath, "utf-8");
+              const mergedContent = mergeAgentOverrides(srcContent, overrides);
+              const destContent = await readFile(destPath, "utf-8");
+              action = mergedContent === destContent ? "noop" : "update";
+            } catch {
+              action = "update";
+            }
+          } else {
+            const unchanged = await fileContentsMatch(srcPath, destPath);
+            action = unchanged ? "noop" : "update";
+          }
+        } else if (isPresent) {
+          action = "update";
+        }
+        // Include override keys hint if overrides exist for this harness
+        const overrides = agent.overrides.get(harnessName);
+        const overrideKeys = overrides ? Object.keys(overrides).filter(k => overrides[k] !== null) : undefined;
+        items.push({
+          type: "agent",
+          name: basename(agentPath, ".md"),
+          destination,
+          action,
+          reason: action === "noop" ? "unchanged" : undefined,
+          overrideKeys: overrideKeys && overrideKeys.length > 0 ? overrideKeys : undefined,
+        });
+      }
     }
 
     // --- Harness-specific components ---
@@ -166,11 +234,20 @@ export async function buildPlan(
               reason: isPresent ? undefined : "not found",
             });
           } else {
+            let action: PlanAction = "add";
+            if (isPresent && !isUrl(fileMapping.source) && !isUrl(sourceDir)) {
+              const srcPath = resolve(sourceDir, fileMapping.source);
+              const unchanged = await fileContentsMatch(srcPath, destPath);
+              action = unchanged ? "noop" : "update";
+            } else if (isPresent) {
+              action = "update";
+            }
             items.push({
               type: "file",
               name: fileMapping.dest,
               destination,
-              action: isPresent ? "update" : "add",
+              action,
+              reason: action === "noop" ? "unchanged" : undefined,
             });
           }
         }
@@ -193,11 +270,20 @@ export async function buildPlan(
               reason: isPresent ? undefined : "not found",
             });
           } else {
+            let action: PlanAction = "add";
+            if (isPresent && !isUrl(rulePath) && !isUrl(sourceDir)) {
+              const srcPath = resolve(sourceDir, rulePath);
+              const unchanged = await fileContentsMatch(srcPath, destPath);
+              action = unchanged ? "noop" : "update";
+            } else if (isPresent) {
+              action = "update";
+            }
             items.push({
               type: "file",
               name: dest,
               destination,
-              action: isPresent ? "update" : "add",
+              action,
+              reason: action === "noop" ? "unchanged" : undefined,
             });
           }
         }
@@ -220,11 +306,20 @@ export async function buildPlan(
               reason: isPresent ? undefined : "not found",
             });
           } else {
+            let action: PlanAction = "add";
+            if (isPresent && !isUrl(cmdPath) && !isUrl(sourceDir)) {
+              const srcPath = resolve(sourceDir, cmdPath);
+              const unchanged = await fileContentsMatch(srcPath, destPath);
+              action = unchanged ? "noop" : "update";
+            } else if (isPresent) {
+              action = "update";
+            }
             items.push({
               type: "file",
               name: dest,
               destination,
-              action: isPresent ? "update" : "add",
+              action,
+              reason: action === "noop" ? "unchanged" : undefined,
             });
           }
         }

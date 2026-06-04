@@ -7,5 +7,6 @@ export type {
   HarnessConfig,
   FileMapping,
   EnvItem,
+  UniversalAgent,
 } from "./schema.ts";
 export { parseManifestFile, parseManifestYaml, normalizeManifest, getDefaultManifestPath, ManifestParseError } from "./parse.ts";

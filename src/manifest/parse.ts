@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { resolve, dirname } from "node:path";
+import { resolve, dirname, basename } from "node:path";
 import yaml from "js-yaml";
 import {
   manifestSchema,
@@ -7,6 +7,7 @@ import {
   type NormalizedManifest,
   type HarnessName,
   type HarnessConfig,
+  type UniversalAgent,
   harnessNames,
 } from "./schema.ts";
 import { isUrl, fetchFileContent, parseGitHubUrl } from "../util/fetch.ts";
@@ -106,6 +107,10 @@ export function parseManifestYaml(content: string): NormalizedManifest {
  */
 export function normalizeManifest(config: ManifestConfig): NormalizedManifest {
   const harnesses = normalizeHarnesses(config.harnesses);
+  const agents = normalizeUniversalAgents(config.agents);
+
+  // Conflict detection: universal agent vs harness-specific agent with same basename
+  detectAgentConflicts(agents, harnesses);
 
   return {
     name: config.name,
@@ -113,6 +118,7 @@ export function normalizeManifest(config: ManifestConfig): NormalizedManifest {
     harnesses,
     mcps: config.mcps ?? {},
     skills: config.skills ?? [],
+    agents,
   };
 }
 
@@ -146,4 +152,65 @@ function normalizeHarnesses(
  */
 export function getDefaultManifestPath(): string {
   return resolve("harness-config.yaml");
+}
+
+/**
+ * Normalize the top-level agents field into UniversalAgent[].
+ */
+function normalizeUniversalAgents(agents?: unknown[]): UniversalAgent[] {
+  if (!agents || agents.length === 0) return [];
+
+  return agents.map((entry) => {
+    if (typeof entry === "string") {
+      return { source: entry, overrides: new Map() };
+    }
+
+    // Object form: { source: "./path", claude: {...}, pi: {...} }
+    const obj = entry as Record<string, unknown>;
+    const source = obj.source as string;
+    const overrides = new Map<HarnessName, Record<string, unknown>>();
+
+    for (const [key, value] of Object.entries(obj)) {
+      if (key === "source") continue;
+      if (harnessNames.includes(key as HarnessName) && value && typeof value === "object") {
+        overrides.set(key as HarnessName, value as Record<string, unknown>);
+      }
+    }
+
+    return { source, overrides };
+  });
+}
+
+/**
+ * Detect conflicts between universal agents and harness-specific agents.
+ * Throws ManifestParseError if a universal agent and a harness-specific agent
+ * would install to the same destination file.
+ */
+function detectAgentConflicts(
+  universalAgents: UniversalAgent[],
+  harnesses: Map<HarnessName, HarnessConfig | null>,
+): void {
+  if (universalAgents.length === 0) return;
+
+  // Build a set of universal agent basenames
+  const universalBasenames = new Map<string, string>();
+  for (const agent of universalAgents) {
+    const name = basename(agent.source);
+    universalBasenames.set(name, agent.source);
+  }
+
+  // Check each harness-specific agents list for conflicts
+  for (const [harnessName, config] of harnesses) {
+    if (!config?.agents) continue;
+    for (const agentPath of config.agents) {
+      const agentBasename = basename(agentPath);
+      const universalSource = universalBasenames.get(agentBasename);
+      if (universalSource) {
+        throw new ManifestParseError(
+          `Conflict: universal agent "${agentBasename}" (from "${universalSource}") and ` +
+          `harness-specific agent "${agentPath}" under "${harnessName}" would both install to the same destination.`,
+        );
+      }
+    }
+  }
 }
