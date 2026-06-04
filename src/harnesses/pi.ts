@@ -66,7 +66,5 @@ export const pi: HarnessAdapter = {
     };
   },
 
-  detectPaths(scope: Scope): string[] {
-    return [this.mcpConfigPath(scope), this.configRoot(scope)];
-  },
+  binaryNames: ["pi"],
 };

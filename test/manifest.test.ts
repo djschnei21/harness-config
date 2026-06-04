@@ -227,4 +227,134 @@ mcps:
     const result = parseManifestYaml(yaml);
     expect(result.mcps.good.env).toEqual([{ SECRET: "keychain:my-service" }]);
   });
+
+  // --- Universal agents ---
+
+  it("parses universal agents as bare string paths", () => {
+    const yaml = `
+name: test
+harnesses: [claude]
+agents:
+  - ./agents/architect.md
+  - ./agents/reviewer.md
+`;
+    const result = parseManifestYaml(yaml);
+    expect(result.agents).toHaveLength(2);
+    expect(result.agents[0].source).toBe("./agents/architect.md");
+    expect(result.agents[0].overrides.size).toBe(0);
+    expect(result.agents[1].source).toBe("./agents/reviewer.md");
+  });
+
+  it("parses universal agents with source + harness overrides", () => {
+    const yaml = `
+name: test
+harnesses: [claude, pi]
+agents:
+  - source: ./agents/architect.md
+    claude:
+      model: sonnet
+      tools:
+        - Read
+        - Grep
+    pi:
+      model: anthropic/claude-sonnet-4
+      thinking: high
+      max_turns: 30
+`;
+    const result = parseManifestYaml(yaml);
+    expect(result.agents).toHaveLength(1);
+    const agent = result.agents[0];
+    expect(agent.source).toBe("./agents/architect.md");
+    expect(agent.overrides.size).toBe(2);
+    expect(agent.overrides.get("claude")).toEqual({ model: "sonnet", tools: ["Read", "Grep"] });
+    expect(agent.overrides.get("pi")).toEqual({ model: "anthropic/claude-sonnet-4", thinking: "high", max_turns: 30 });
+  });
+
+  it("parses mixed bare string and object agent entries", () => {
+    const yaml = `
+name: test
+harnesses: [claude]
+agents:
+  - ./agents/simple.md
+  - source: ./agents/configured.md
+    claude:
+      model: sonnet
+`;
+    const result = parseManifestYaml(yaml);
+    expect(result.agents).toHaveLength(2);
+    expect(result.agents[0].source).toBe("./agents/simple.md");
+    expect(result.agents[0].overrides.size).toBe(0);
+    expect(result.agents[1].source).toBe("./agents/configured.md");
+    expect(result.agents[1].overrides.get("claude")).toEqual({ model: "sonnet" });
+  });
+
+  it("ignores non-harness keys in agent object entries", () => {
+    const yaml = `
+name: test
+harnesses: [claude]
+agents:
+  - source: ./agents/architect.md
+    claude:
+      model: sonnet
+    some_random_key:
+      foo: bar
+`;
+    const result = parseManifestYaml(yaml);
+    const agent = result.agents[0];
+    // Only valid harness names become overrides
+    expect(agent.overrides.size).toBe(1);
+    expect(agent.overrides.has("claude")).toBe(true);
+  });
+
+  it("defaults agents to empty array when not provided", () => {
+    const yaml = `
+name: test
+harnesses: [claude]
+`;
+    const result = parseManifestYaml(yaml);
+    expect(result.agents).toEqual([]);
+  });
+
+  it("detects conflict between universal and harness-specific agent", () => {
+    const yaml = `
+name: test
+harnesses:
+  claude:
+    agents:
+      - ./claude-agents/architect.md
+agents:
+  - ./agents/architect.md
+`;
+    expect(() => parseManifestYaml(yaml)).toThrow(ManifestParseError);
+    expect(() => parseManifestYaml(yaml)).toThrow(/Conflict/);
+  });
+
+  it("does not conflict when basenames are different", () => {
+    const yaml = `
+name: test
+harnesses:
+  claude:
+    agents:
+      - ./claude-agents/reviewer.md
+agents:
+  - ./agents/architect.md
+`;
+    const result = parseManifestYaml(yaml);
+    expect(result.agents).toHaveLength(1);
+    expect(result.harnesses.get("claude")?.agents).toEqual(["./claude-agents/reviewer.md"]);
+  });
+
+  it("detects conflict even when paths differ but basenames match", () => {
+    const yaml = `
+name: test
+harnesses:
+  pi:
+    agents:
+      - ./pi/special/architect.md
+agents:
+  - ./universal/architect.md
+`;
+    expect(() => parseManifestYaml(yaml)).toThrow(/Conflict/);
+    expect(() => parseManifestYaml(yaml)).toThrow(/architect\.md/);
+  });
 });

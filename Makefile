@@ -1,4 +1,6 @@
-.PHONY: check build test typecheck clean release release-patch release-minor release-major
+.PHONY: check build test typecheck clean release release-patch release-minor release-major try-simple try-complex try-clean
+
+ROOT := $(CURDIR)
 
 # Full pipeline: typecheck, test, build
 check: typecheck test build
@@ -25,6 +27,30 @@ build:
 # Remove build artifacts
 clean:
 	rm -rf dist node_modules
+
+# Remove fixture target directories
+try-clean:
+	rm -rf fixtures/simple/targetdir fixtures/complex/targetdir
+
+# Run against the simple fixture (interactive)
+try-simple:
+	@mkdir -p fixtures/simple/targetdir
+	cd fixtures/simple/targetdir && npx tsx $(ROOT)/src/cli.ts add ..
+
+# Run against the complex fixture (interactive)
+try-complex:
+	@mkdir -p fixtures/complex/targetdir
+	cd fixtures/complex/targetdir && npx tsx $(ROOT)/src/cli.ts add ..
+
+# Run against simple fixture non-interactively
+try-simple-ci:
+	@mkdir -p fixtures/simple/targetdir
+	cd fixtures/simple/targetdir && npx tsx $(ROOT)/src/cli.ts add .. --yes
+
+# Run against complex fixture non-interactively
+try-complex-ci:
+	@mkdir -p fixtures/complex/targetdir
+	cd fixtures/complex/targetdir && npx tsx $(ROOT)/src/cli.ts add .. --yes
 
 # Release targets — run checks, bump version, tag, push, publish
 release-patch: check

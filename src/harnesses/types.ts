@@ -51,6 +51,6 @@ export interface HarnessAdapter {
 
   // --- Detection ---
 
-  /** Paths to check for existing config (returns first match) */
-  detectPaths(scope: Scope): string[];
+  /** Binary names to check via `which` — if ANY is found, the harness is considered installed */
+  readonly binaryNames: string[];
 }

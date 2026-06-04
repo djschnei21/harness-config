@@ -56,8 +56,7 @@ export async function executeAdd(
   manifest: NormalizedManifest,
   options: EngineOptions,
 ): Promise<EngineResult> {
-  const targetHarnesses = resolveTargetHarnesses(manifest, options.harnesses);
-  const warnings: string[] = [];
+  const { harnesses: targetHarnesses, warnings } = resolveTargetHarnesses(manifest, options.harnesses);
   const results: HarnessResult[] = [];
 
   // Source paths resolve relative to manifest location; output relative to cwd
@@ -104,6 +103,29 @@ export async function executeAdd(
       result.skills.push(skillItem);
       if (options.onProgress) {
         options.onProgress({ type: "skill", name: skillItem.name, path: skillItem.path, action: skillItem.unchanged ? "unchanged" : "added", harness: adapter.displayName });
+      }
+    }
+
+    // --- Universal Agents ---
+    for (const agent of manifest.agents ?? []) {
+      // Get per-harness overrides if any
+      const overrides = agent.overrides.get(harnessName);
+      const agentResult = await addAgent(adapter, agent.source, options.scope, sourceDir, options.cwd, overrides);
+      if ("installed" in agentResult) {
+        const item: ItemResult = {
+          name: basename(agent.source),
+          path: agentResult.installed,
+          unchanged: agentResult.unchanged ?? false,
+        };
+        result.agents.push(item);
+        if (options.onProgress) {
+          options.onProgress({ type: "agent", name: item.name, path: item.path, action: item.unchanged ? "unchanged" : "added", harness: adapter.displayName });
+        }
+      } else {
+        result.skipped.push({ component: agent.source, reason: agentResult.reason });
+        if (options.onProgress) {
+          options.onProgress({ type: "agent", name: basename(agent.source), path: "", action: "skipped", harness: adapter.displayName });
+        }
       }
     }
 
@@ -221,8 +243,7 @@ export async function executeRm(
   manifest: NormalizedManifest,
   options: EngineOptions,
 ): Promise<EngineResult> {
-  const targetHarnesses = resolveTargetHarnesses(manifest, options.harnesses);
-  const warnings: string[] = [];
+  const { harnesses: targetHarnesses, warnings } = resolveTargetHarnesses(manifest, options.harnesses);
   const results: HarnessResult[] = [];
 
   for (const harnessName of targetHarnesses) {
@@ -261,6 +282,23 @@ export async function executeRm(
         result.skipped.push({ component: skillPath, reason: skillResult.reason });
         if (options.onProgress) {
           options.onProgress({ type: "skill", name: basename(skillPath), path: "", action: "skipped", harness: adapter.displayName });
+        }
+      }
+    }
+
+    // --- Universal Agents ---
+    for (const agent of manifest.agents ?? []) {
+      const agentName = basename(agent.source);
+      const agentResult = await removeAgent(adapter, agentName, options.scope, options.cwd);
+      if ("removed" in agentResult) {
+        result.agents.push({ name: agentName, path: agentResult.removed, unchanged: false });
+        if (options.onProgress) {
+          options.onProgress({ type: "agent", name: agentName, path: agentResult.removed, action: "removed", harness: adapter.displayName });
+        }
+      } else {
+        result.skipped.push({ component: agent.source, reason: agentResult.reason });
+        if (options.onProgress) {
+          options.onProgress({ type: "agent", name: agentName, path: "", action: "skipped", harness: adapter.displayName });
         }
       }
     }
@@ -349,26 +387,18 @@ export async function executeRm(
 
 /**
  * Determine which harnesses to target.
- * If options.harnesses is specified, intersect with manifest's declared harnesses.
+ * If options.harnesses is specified, use them all but warn about undeclared ones.
  */
 function resolveTargetHarnesses(
   manifest: NormalizedManifest,
   filterHarnesses?: HarnessName[],
-): HarnessName[] {
+): { harnesses: HarnessName[]; warnings: string[] } {
   const declaredHarnesses = Array.from(manifest.harnesses.keys());
+  const warnings: string[] = [];
 
   if (!filterHarnesses || filterHarnesses.length === 0) {
-    return declaredHarnesses;
+    return { harnesses: declaredHarnesses, warnings };
   }
 
-  // Validate that filter is a subset of declared
-  const invalid = filterHarnesses.filter((h) => !declaredHarnesses.includes(h));
-  if (invalid.length > 0) {
-    throw new Error(
-      `Harness(es) ${invalid.map((h) => `"${h}"`).join(", ")} not declared in manifest. ` +
-        `Available: ${declaredHarnesses.join(", ")}`,
-    );
-  }
-
-  return filterHarnesses;
+  return { harnesses: filterHarnesses, warnings };
 }

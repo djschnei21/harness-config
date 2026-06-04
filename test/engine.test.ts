@@ -240,18 +240,239 @@ You are a software architect.`;
       expect(result.results[0].harness).toBe("Claude Code");
     });
 
-    it("throws if filter harness not in manifest", async () => {
+    it("installs universal components to undeclared harness targets without throwing", async () => {
       const manifest = makeManifest({
         harnesses: new Map([["claude", null]]),
+        mcps: { server: { stdio: "cmd" } },
       });
 
-      await expect(
-        executeAdd(manifest, {
-          scope: "project",
-          cwd: tmpDir,
-          harnesses: ["pi"],
-        }),
-      ).rejects.toThrow(/not declared in manifest/);
+      const result = await executeAdd(manifest, {
+        scope: "project",
+        cwd: tmpDir,
+        harnesses: ["pi"],
+      });
+
+      // Should not throw — undeclared harnesses are allowed
+      // Warning is now handled by CLI layer, not engine
+      expect(result.warnings).toEqual([]);
+      // Universal components (MCPs) still install to the undeclared harness
+      expect(result.results).toHaveLength(1);
+      expect(result.results[0].mcps).toEqual(["server"]);
+    });
+
+    it("skips harness-specific components for undeclared harness targets", async () => {
+      // Create agent source (declared for claude only)
+      await mkdir(join(tmpDir, "agents"), { recursive: true });
+      await writeFile(join(tmpDir, "agents", "architect.md"), "---\nname: Architect\n---\nBody");
+
+      const manifest = makeManifest({
+        harnesses: new Map([["claude", { agents: ["./agents/architect.md"] }]]),
+        mcps: { server: { stdio: "cmd" } },
+        skills: [],
+      });
+
+      // Target pi (undeclared) — should get universal MCPs but not claude-specific agents
+      const result = await executeAdd(manifest, {
+        scope: "project",
+        cwd: tmpDir,
+        harnesses: ["pi"],
+      });
+
+      expect(result.warnings).toHaveLength(0);
+      expect(result.results).toHaveLength(1);
+      expect(result.results[0].mcps).toEqual(["server"]); // universal: installed
+      expect(result.results[0].agents).toEqual([]);        // harness-specific: skipped
+    });
+  });
+
+  describe("universal agents", () => {
+    it("installs universal agents to all target harnesses", async () => {
+      // Create agent source
+      await mkdir(join(tmpDir, "agents"), { recursive: true });
+      await writeFile(join(tmpDir, "agents", "architect.md"), "---\nname: Architect\n---\nYou are an architect.");
+
+      const manifest = makeManifest({
+        agents: [
+          { source: "./agents/architect.md", overrides: new Map() },
+        ],
+      });
+
+      const result = await executeAdd(manifest, {
+        scope: "project",
+        cwd: tmpDir,
+      });
+
+      // Should install to both claude and opencode (the declared harnesses)
+      expect(result.results).toHaveLength(2);
+      expect(result.results[0].agents).toHaveLength(1);
+      expect(result.results[0].agents[0].name).toBe("architect.md");
+      expect(result.results[1].agents).toHaveLength(1);
+      expect(result.results[1].agents[0].name).toBe("architect.md");
+
+      // Verify file exists in claude agent dir
+      const claudeContent = await readFile(join(tmpDir, ".claude", "agents", "architect.md"), "utf-8");
+      expect(claudeContent).toContain("You are an architect.");
+    });
+
+    it("removes universal agents from all target harnesses", async () => {
+      // Install first
+      await mkdir(join(tmpDir, "agents"), { recursive: true });
+      await writeFile(join(tmpDir, "agents", "architect.md"), "---\nname: Architect\n---\nBody");
+
+      const manifest = makeManifest({
+        agents: [
+          { source: "./agents/architect.md", overrides: new Map() },
+        ],
+      });
+
+      await executeAdd(manifest, { scope: "project", cwd: tmpDir });
+
+      // Now remove
+      const result = await executeRm(manifest, { scope: "project", cwd: tmpDir });
+
+      expect(result.results).toHaveLength(2);
+      expect(result.results[0].agents).toHaveLength(1);
+      expect(result.results[0].agents[0].name).toBe("architect.md");
+    });
+
+    it("installs universal agents to undeclared harnesses", async () => {
+      await mkdir(join(tmpDir, "agents"), { recursive: true });
+      await writeFile(join(tmpDir, "agents", "architect.md"), "---\nname: Architect\n---\nBody");
+
+      const manifest = makeManifest({
+        harnesses: new Map([["claude", null]]),
+        agents: [
+          { source: "./agents/architect.md", overrides: new Map() },
+        ],
+      });
+
+      // Target pi (undeclared) — universal agents should still install
+      const result = await executeAdd(manifest, {
+        scope: "project",
+        cwd: tmpDir,
+        harnesses: ["pi"],
+      });
+
+      expect(result.results).toHaveLength(1);
+      expect(result.results[0].agents).toHaveLength(1);
+      expect(result.results[0].agents[0].name).toBe("architect.md");
+    });
+
+    it("applies frontmatter overrides for the target harness", async () => {
+      await mkdir(join(tmpDir, "agents"), { recursive: true });
+      await writeFile(
+        join(tmpDir, "agents", "architect.md"),
+        "---\nname: Architect\ndescription: A software architect\n---\nYou are an architect.",
+      );
+
+      const manifest = makeManifest({
+        agents: [
+          {
+            source: "./agents/architect.md",
+            overrides: new Map([
+              ["claude", { model: "sonnet", tools: ["Read", "Grep"] }],
+              ["opencode", { model: "claude-sonnet", steps: 30 }],
+            ]),
+          },
+        ],
+      });
+
+      const result = await executeAdd(manifest, {
+        scope: "project",
+        cwd: tmpDir,
+      });
+
+      expect(result.results).toHaveLength(2);
+
+      // Claude should have model and tools merged
+      const claudeContent = await readFile(
+        join(tmpDir, ".claude", "agents", "architect.md"),
+        "utf-8",
+      );
+      expect(claudeContent).toContain("model: sonnet");
+      expect(claudeContent).toContain("- Read");
+      expect(claudeContent).toContain("- Grep");
+      expect(claudeContent).toContain("name: Architect");
+      expect(claudeContent).toContain("You are an architect.");
+
+      // OpenCode should have model and steps merged
+      const opencodeContent = await readFile(
+        join(tmpDir, ".opencode", "agents", "architect.md"),
+        "utf-8",
+      );
+      expect(opencodeContent).toContain("model: claude-sonnet");
+      expect(opencodeContent).toContain("steps: 30");
+      expect(opencodeContent).toContain("name: Architect");
+      expect(opencodeContent).toContain("You are an architect.");
+    });
+
+    it("copies as-is when no overrides exist for target harness", async () => {
+      await mkdir(join(tmpDir, "agents"), { recursive: true });
+      const sourceContent = "---\nname: Architect\n---\nYou are an architect.";
+      await writeFile(join(tmpDir, "agents", "architect.md"), sourceContent);
+
+      const manifest = makeManifest({
+        agents: [
+          {
+            source: "./agents/architect.md",
+            overrides: new Map([
+              ["claude", { model: "sonnet" }],
+              // No overrides for opencode
+            ]),
+          },
+        ],
+      });
+
+      const result = await executeAdd(manifest, {
+        scope: "project",
+        cwd: tmpDir,
+      });
+
+      expect(result.results).toHaveLength(2);
+
+      // OpenCode should get the source as-is (no overrides)
+      const opencodeContent = await readFile(
+        join(tmpDir, ".opencode", "agents", "architect.md"),
+        "utf-8",
+      );
+      expect(opencodeContent).toBe(sourceContent);
+    });
+
+    it("removes keys when override value is null", async () => {
+      await mkdir(join(tmpDir, "agents"), { recursive: true });
+      await writeFile(
+        join(tmpDir, "agents", "architect.md"),
+        "---\nname: Architect\nmodel: haiku\ntools:\n  - Read\n  - Write\n---\nBody.",
+      );
+
+      const manifest = makeManifest({
+        agents: [
+          {
+            source: "./agents/architect.md",
+            overrides: new Map([
+              ["claude", { tools: null }],
+            ]),
+          },
+        ],
+      });
+
+      const result = await executeAdd(manifest, {
+        scope: "project",
+        cwd: tmpDir,
+        harnesses: ["claude"],
+      });
+
+      expect(result.results).toHaveLength(1);
+
+      const claudeContent = await readFile(
+        join(tmpDir, ".claude", "agents", "architect.md"),
+        "utf-8",
+      );
+      expect(claudeContent).toContain("name: Architect");
+      expect(claudeContent).toContain("model: haiku");
+      expect(claudeContent).not.toContain("tools");
+      expect(claudeContent).not.toContain("Read");
+      expect(claudeContent).toContain("Body.");
     });
   });
 });

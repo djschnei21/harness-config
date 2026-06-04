@@ -1,5 +1,4 @@
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { execSync } from "node:child_process";
 import type { HarnessName } from "../manifest/schema.ts";
 import type { HarnessAdapter } from "./types.ts";
 import { claude } from "./claude.ts";
@@ -38,11 +37,48 @@ export function getHarnesses(names: HarnessName[]): HarnessAdapter[] {
   return names.map((n) => registry[n]);
 }
 
+/** Cache of binary detection results (per process). */
+const detectionCache = new Map<string, boolean>();
+
 /**
- * Detect if a harness has existing config on disk.
- * Checks MCP config and config root directory.
+ * Check if a binary is available on the system PATH.
+ * Results are cached for the lifetime of the process.
  */
-export function isHarnessDetected(adapter: HarnessAdapter, scope: "project" | "global", cwd: string): boolean {
-  const paths = adapter.detectPaths(scope);
-  return paths.some((p) => existsSync(resolve(cwd, p)));
+export function isBinaryInstalled(binaryName: string): boolean {
+  if (detectionCache.has(binaryName)) {
+    return detectionCache.get(binaryName)!;
+  }
+  let found: boolean;
+  try {
+    execSync(`which ${binaryName}`, { stdio: "ignore" });
+    found = true;
+  } catch {
+    found = false;
+  }
+  detectionCache.set(binaryName, found);
+  return found;
+}
+
+/**
+ * Detect if a harness is installed on the machine by checking for its binary.
+ * Returns true if ANY of the adapter's binaryNames are found on PATH.
+ */
+export function isHarnessDetected(adapter: HarnessAdapter): boolean {
+  return adapter.binaryNames.some((bin) => isBinaryInstalled(bin));
+}
+
+/**
+ * Clear the detection cache (useful for testing).
+ */
+export function clearDetectionCache(): void {
+  detectionCache.clear();
+}
+
+/**
+ * Seed the detection cache with known values (useful for testing).
+ */
+export function seedDetectionCache(entries: Record<string, boolean>): void {
+  for (const [key, value] of Object.entries(entries)) {
+    detectionCache.set(key, value);
+  }
 }

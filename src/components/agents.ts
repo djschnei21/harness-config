@@ -5,6 +5,7 @@ import type { HarnessName } from "../manifest/schema.ts";
 import { rm } from "node:fs/promises";
 import { isUrl, fetchFileContent } from "../util/fetch.ts";
 import { isContentUnchanged } from "../util/json.ts";
+import { mergeAgentOverrides } from "../util/frontmatter.ts";
 
 /**
  * Agent frontmatter field support by harness.
@@ -153,6 +154,7 @@ export function transformAgentContent(content: string, harnessName: HarnessName)
  * Install an agent to a harness.
  * sourceDir: where to find the agent file (manifest location, may be a URL base)
  * destCwd: where to write output (working directory)
+ * overrides: optional per-harness frontmatter overrides to merge
  */
 export async function addAgent(
   adapter: HarnessAdapter,
@@ -160,6 +162,7 @@ export async function addAgent(
   scope: Scope,
   sourceDir: string,
   destCwd: string,
+  overrides?: Record<string, unknown>,
 ): Promise<{ installed: string; unchanged?: boolean } | { skipped: string; reason: string }> {
   const agentDir = adapter.agentDir(scope);
   if (!agentDir) {
@@ -177,6 +180,11 @@ export async function addAgent(
   } else {
     const absoluteAgentPath = resolve(sourceDir, agentPath);
     content = await readFile(absoluteAgentPath, "utf-8");
+  }
+
+  // Apply frontmatter overrides if provided
+  if (overrides && Object.keys(overrides).length > 0) {
+    content = mergeAgentOverrides(content, overrides);
   }
 
   const filename = basename(agentPath);

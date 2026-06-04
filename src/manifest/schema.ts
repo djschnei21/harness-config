@@ -74,6 +74,15 @@ const harnessesMapSchema = z.record(harnessNameSchema, harnessConfigSchema);
 
 export const harnessesSchema = z.union([harnessesArraySchema, harnessesMapSchema]);
 
+// --- Universal agent entry ---
+
+// Simple form: bare string path
+// Rich form: object with `source` + per-harness override keys
+const universalAgentEntrySchema = z.union([
+  z.string(),
+  z.object({ source: z.string() }).passthrough(),
+]);
+
 // --- Top-level manifest ---
 
 export const manifestSchema = z.object({
@@ -82,6 +91,7 @@ export const manifestSchema = z.object({
   harnesses: harnessesSchema,
   mcps: z.record(z.string(), mcpDefSchema).optional(),
   skills: z.array(z.string()).optional(),
+  agents: z.array(universalAgentEntrySchema).optional(),
 });
 
 // --- Inferred types ---
@@ -93,6 +103,15 @@ export type HarnessConfig = z.infer<typeof harnessConfigSchema>;
 export type FileMapping = z.infer<typeof fileMappingSchema>;
 export type EnvItem = z.infer<typeof envItemSchema>;
 
+// --- Universal agent (normalized) ---
+
+export interface UniversalAgent {
+  /** Source file path (relative to manifest baseDir) */
+  source: string;
+  /** Per-harness frontmatter overrides */
+  overrides: Map<HarnessName, Record<string, unknown>>;
+}
+
 // --- Normalized types (post-parsing) ---
 
 export interface NormalizedManifest {
@@ -101,6 +120,8 @@ export interface NormalizedManifest {
   harnesses: Map<HarnessName, HarnessConfig | null>;
   mcps: Record<string, McpDef>;
   skills: string[];
+  /** Universal agents (top-level agents field) */
+  agents: UniversalAgent[];
   /** Base directory for resolving relative paths in the manifest */
   baseDir?: string;
 }

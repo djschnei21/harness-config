@@ -1,5 +1,7 @@
-import { describe, it, expect } from "vitest";
-import { parseArgs } from "../src/cli.ts";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { parseArgs, buildHarnessPickerOptions, computeCiHarnessTargets } from "../src/cli.ts";
+import { clearDetectionCache, seedDetectionCache } from "../src/harnesses/index.ts";
+import { harnessNames } from "../src/manifest/schema.ts";
 
 describe("CLI argument parsing", () => {
   function argv(...args: string[]): string[] {
@@ -93,5 +95,104 @@ describe("CLI argument parsing", () => {
     expect(result.harnesses).toEqual(["claude", "opencode"]);
     expect(result.global).toBe(true);
     expect(result.yes).toBe(true);
+  });
+});
+
+describe("Harness picker options", () => {
+  beforeEach(() => {
+    clearDetectionCache();
+  });
+
+  afterEach(() => {
+    clearDetectionCache();
+  });
+
+  function mockDetection(installedBinaries: string[]) {
+    // Seed cache so that listed binaries are "found" and all others are not
+    const allBinaries = ["claude", "pi", "opencode", "copilot", "code"];
+    const entries: Record<string, boolean> = {};
+    for (const bin of allBinaries) {
+      entries[bin] = installedBinaries.includes(bin);
+    }
+    seedDetectionCache(entries);
+  }
+
+  describe("buildHarnessPickerOptions", () => {
+    it("shows ALL known harnesses regardless of what's declared", () => {
+      mockDetection([]);
+      const options = buildHarnessPickerOptions(["claude"]);
+      expect(options).toHaveLength(harnessNames.length);
+      expect(options.map(o => o.value)).toEqual([...harnessNames]);
+    });
+
+    it("marks declared harnesses as supported with no hint", () => {
+      mockDetection([]);
+      const options = buildHarnessPickerOptions(["claude", "pi"]);
+      const claude = options.find(o => o.value === "claude")!;
+      const pi = options.find(o => o.value === "pi")!;
+      expect(claude.supported).toBe(true);
+      expect(claude.hint).toBeUndefined();
+      expect(pi.supported).toBe(true);
+      expect(pi.hint).toBeUndefined();
+    });
+
+    it("marks undeclared harnesses as unsupported with hint", () => {
+      mockDetection([]);
+      const options = buildHarnessPickerOptions(["claude"]);
+      const opencode = options.find(o => o.value === "opencode")!;
+      const copilot = options.find(o => o.value === "copilot")!;
+      expect(opencode.supported).toBe(false);
+      expect(opencode.hint).toBe("unsupported");
+      expect(copilot.supported).toBe(false);
+      expect(copilot.hint).toBe("unsupported");
+    });
+
+    it("marks detected harnesses with detected=true", () => {
+      mockDetection(["claude", "pi"]);
+      const options = buildHarnessPickerOptions(["claude"]);
+      const claude = options.find(o => o.value === "claude")!;
+      const pi = options.find(o => o.value === "pi")!;
+      const opencode = options.find(o => o.value === "opencode")!;
+      expect(claude.detected).toBe(true);
+      expect(pi.detected).toBe(true);
+      expect(opencode.detected).toBe(false);
+    });
+
+    it("uses pc.dim on undetected harness labels (distinguishable in TTY)", () => {
+      mockDetection(["claude"]);
+      const options = buildHarnessPickerOptions(["claude", "pi"]);
+      const claude = options.find(o => o.value === "claude")!;
+      const pi = options.find(o => o.value === "pi")!;
+      // Claude is detected — label should be the plain display name
+      expect(claude.label).toBe("Claude Code");
+      expect(claude.detected).toBe(true);
+      // Pi is NOT detected — detected flag should be false
+      // In a TTY, pc.dim() adds ANSI codes; in tests (non-TTY) it may not
+      expect(pi.detected).toBe(false);
+      expect(pi.label).toContain("Pi");
+    });
+  });
+
+  describe("computeCiHarnessTargets", () => {
+    it("returns supported ∩ detected when some are detected", () => {
+      mockDetection(["claude"]);
+      const result = computeCiHarnessTargets(["claude", "pi"]);
+      expect(result.harnesses).toEqual(["claude"]);
+      expect(result.fellBack).toBe(false);
+    });
+
+    it("falls back to all supported when none are detected", () => {
+      mockDetection([]);
+      const result = computeCiHarnessTargets(["claude", "pi"]);
+      expect(result.harnesses).toEqual(["claude", "pi"]);
+      expect(result.fellBack).toBe(true);
+    });
+
+    it("only includes supported harnesses even if others are detected", () => {
+      mockDetection(["claude", "opencode"]);
+      const result = computeCiHarnessTargets(["claude"]);
+      expect(result.harnesses).toEqual(["claude"]);
+      expect(result.fellBack).toBe(false);
+    });
   });
 });

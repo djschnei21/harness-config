@@ -10,6 +10,7 @@ import { getHarness, isHarnessDetected, type Scope } from "./harnesses/index.ts"
 import { isUrl } from "./util/fetch.ts";
 import { buildPlan, summarizePlan, type HarnessPlan, type PlanItem } from "./plan.ts";
 import { validateKeychainRefsStructured, type MissingKeychainItem } from "./keychain/resolve.ts";
+import { buildComponentTreeOptions, countManifestComponents, filterManifest } from "./filter.ts";
 
 /**
  * Replace the user's home directory with ~ in displayed paths.
@@ -108,24 +109,63 @@ export function parseArgs(argv: string[]): ParsedArgs {
   return result;
 }
 
+export interface HarnessPickerOption {
+  value: HarnessName;
+  label: string;
+  hint: string | undefined;
+  detected: boolean;
+  supported: boolean;
+}
+
 /**
- * Interactive harness picker — lets user choose which declared harnesses to target.
+ * Build the harness picker options showing ALL known harnesses with annotations.
+ * Exported for testability.
  */
-async function selectHarnesses(declaredHarnesses: HarnessName[], scope: Scope, command: "add" | "rm"): Promise<HarnessName[]> {
-  const options = declaredHarnesses.map((name) => {
+export function buildHarnessPickerOptions(declaredHarnesses: HarnessName[]): HarnessPickerOption[] {
+  return harnessNames.map((name) => {
     const adapter = getHarness(name);
-    const detected = isHarnessDetected(adapter, scope, process.cwd());
+    const detected = isHarnessDetected(adapter);
+    const supported = declaredHarnesses.includes(name);
+    // Dim label for undetected harnesses
+    const label = detected ? adapter.displayName : pc.dim(adapter.displayName);
+    // Show (unsupported) hint for harnesses not declared in the manifest
+    const hint = supported ? undefined : "unsupported";
     return {
       value: name,
-      label: adapter.displayName,
-      hint: detected ? "detected" : undefined,
+      label,
+      hint,
       detected,
+      supported,
     };
   });
+}
 
-  // Pre-select detected harnesses so Enter immediately submits them
+/**
+ * Compute the default harness targets for --yes (CI) mode.
+ * Returns supported ∩ detected, or falls back to all supported if none detected.
+ * Exported for testability.
+ */
+export function computeCiHarnessTargets(declaredHarnesses: HarnessName[]): { harnesses: HarnessName[]; fellBack: boolean } {
+  const supportedAndDetected = declaredHarnesses.filter((name) => {
+    const adapter = getHarness(name);
+    return isHarnessDetected(adapter);
+  });
+  if (supportedAndDetected.length > 0) {
+    return { harnesses: supportedAndDetected, fellBack: false };
+  }
+  return { harnesses: declaredHarnesses, fellBack: true };
+}
+
+/**
+ * Interactive harness picker — shows ALL known harnesses with detection + support annotations.
+ * Pre-selects harnesses that are both supported (declared in manifest) AND detected (binary installed).
+ */
+async function selectHarnesses(declaredHarnesses: HarnessName[], command: "add" | "rm"): Promise<HarnessName[]> {
+  const options = buildHarnessPickerOptions(declaredHarnesses);
+
+  // Pre-select only harnesses that are BOTH supported AND detected
   const initialValues = options
-    .filter((o) => o.detected)
+    .filter((o) => o.detected && o.supported)
     .map((o) => o.value);
 
   const message = command === "add"
@@ -182,56 +222,6 @@ function displayManifestInfo(manifest: NormalizedManifest): void {
     ? `${pc.bold(pc.cyan(title))}: ${pc.dim(manifest.description)}`
     : pc.bold(pc.cyan(title));
   p.log.message(titleLine);
-
-  // Components list — mirror manifest structure
-  const lines: string[] = [];
-
-  // Universal components (top-level mcps, skills)
-  for (const name of Object.keys(manifest.mcps)) {
-    lines.push(`  ${pc.dim("mcp")}    ${pc.cyan(name)}`);
-  }
-  for (const skillPath of manifest.skills) {
-    lines.push(`  ${pc.dim("skill")}  ${pc.cyan(basename(skillPath))}`);
-  }
-
-  // Harness-specific components
-  for (const [harnessName, config] of manifest.harnesses) {
-    if (!config) continue;
-    const harnessItems: string[] = [];
-    if (config.agents) {
-      for (const agentPath of config.agents) {
-        harnessItems.push(`    ${pc.dim("agent")}    ${pc.cyan(basename(agentPath, ".md"))}`);
-      }
-    }
-    if (config.skills) {
-      for (const skillPath of config.skills) {
-        harnessItems.push(`    ${pc.dim("skill")}    ${pc.cyan(basename(skillPath))}`);
-      }
-    }
-    if (config.rules) {
-      for (const rulePath of config.rules) {
-        harnessItems.push(`    ${pc.dim("rule")}     ${pc.cyan(basename(rulePath))}`);
-      }
-    }
-    if (config.commands) {
-      for (const cmdPath of config.commands) {
-        harnessItems.push(`    ${pc.dim("command")}  ${pc.cyan(basename(cmdPath))}`);
-      }
-    }
-    if (config.files) {
-      for (const fileMapping of config.files) {
-        harnessItems.push(`    ${pc.dim("file")}     ${pc.cyan(fileMapping.dest)}`);
-      }
-    }
-    if (harnessItems.length > 0) {
-      lines.push(`  ${pc.dim(harnessName + ":")}`);
-      lines.push(...harnessItems);
-    }
-  }
-
-  if (lines.length > 0) {
-    p.log.info(`Contains:\n${lines.join("\n")}`);
-  }
 }
 
 /**
@@ -270,14 +260,17 @@ function displayPlan(plans: HarnessPlan[]): void {
 function formatPlanItem(item: PlanItem): string {
   const label = `${item.type} ${pc.bold(`"${item.name}"`)}`;
   const dest = shortenPath(item.destination);
+  const overrideHint = item.overrideKeys && item.overrideKeys.length > 0
+    ? `  ${pc.dim(`(+ ${item.overrideKeys.join(", ")})`)}`
+    : "";
 
   switch (item.action) {
     case "add":
-      return `  ${pc.green("+")} ${label}  ${pc.dim("\u2192")} ${pc.dim(dest)}`;
+      return `  ${pc.green("+")} ${label}  ${pc.dim("\u2192")} ${pc.dim(dest)}${overrideHint}`;
     case "remove":
       return `  ${pc.red("-")} ${label}  ${pc.dim("\u2192")} ${pc.dim(dest)}`;
     case "update":
-      return `  ${pc.yellow("~")} ${label}  ${pc.dim("\u2192")} ${pc.dim(dest)}`;
+      return `  ${pc.yellow("~")} ${label}  ${pc.dim("\u2192")} ${pc.dim(dest)}${overrideHint}`;
     case "noop":
       return `  ${pc.dim("\u25cb")} ${label}  ${pc.dim(item.reason ?? "no-op")}`;
   }
@@ -475,35 +468,78 @@ export async function main(): Promise<void> {
 
     // Determine target harnesses
     let targetHarnesses: HarnessName[] | undefined;
+    const declaredHarnesses = Array.from(manifest.harnesses.keys());
 
     if (args.allHarnesses) {
       // --harness all — use all harnesses declared in the manifest
-      targetHarnesses = Array.from(manifest.harnesses.keys());
+      targetHarnesses = declaredHarnesses;
     } else if (args.harnesses.length > 0) {
-      // Explicit --harness flags — use those (engine validates subset)
+      // Explicit --harness flags — use those
       targetHarnesses = args.harnesses;
     } else if (!args.yes) {
-      // Interactive mode — show harness picker
-      const declaredHarnesses = Array.from(manifest.harnesses.keys());
-      if (declaredHarnesses.length > 1) {
-        const selected = await selectHarnesses(declaredHarnesses, scope, args.command);
-        targetHarnesses = selected;
+      // Interactive mode — always show harness picker
+      const selected = await selectHarnesses(declaredHarnesses, args.command);
+      targetHarnesses = selected;
+    } else {
+      // --yes with no --harness → default to supported ∩ detected, fallback to all supported
+      const { harnesses: ciTargets, fellBack } = computeCiHarnessTargets(declaredHarnesses);
+      if (fellBack) {
+        p.log.warn("No supported harnesses detected on this machine. Targeting all supported harnesses.");
       }
-      // If only 1 harness declared, no need to pick — use it
+      targetHarnesses = ciTargets;
     }
-    // --yes with no --harness → targetHarnesses stays undefined → engine uses all declared
+
+    // Warn about unsupported harnesses immediately after selection
+    const unsupportedSelected = (targetHarnesses ?? []).filter((h) => !declaredHarnesses.includes(h));
+    for (const name of unsupportedSelected) {
+      const verb = args.command === "add" ? "installed to" : "removed from";
+      p.log.warn(`Harness "${name}" is not declared in this manifest -- only universal components will be ${verb} ${name}.`);
+    }
 
     // Resolve final harness list for display
     const finalHarnesses = targetHarnesses ?? Array.from(manifest.harnesses.keys());
 
+    // Component tree picker — let user select subset of components
+    let activeManifest = manifest;
+    if (!args.yes && countManifestComponents(manifest) > 1) {
+      const { options: treeOptions, initialValues } = buildComponentTreeOptions(
+        manifest,
+        finalHarnesses,
+        declaredHarnesses,
+      );
+
+      // Only show tree if there are options to select from
+      if (Object.keys(treeOptions).length > 0) {
+        const hint = pc.dim(`  space`) + pc.dim(" = toggle, ") + pc.dim(`enter`) + pc.dim(" = confirm");
+        const selected = await p.groupMultiselect({
+          message: `Select components to install\n${hint}`,
+          options: treeOptions,
+          initialValues,
+          required: true,
+          selectableGroups: true,
+        });
+
+        if (p.isCancel(selected)) {
+          p.cancel("Operation cancelled.");
+          process.exit(0);
+        }
+
+        const selectedKeys = selected as string[];
+        // Only filter if user deselected something
+        if (selectedKeys.length < initialValues.length || !initialValues.every((v) => selectedKeys.includes(v))) {
+          activeManifest = filterManifest(manifest, selectedKeys);
+        }
+      }
+    }
+
     // Build and display execution plan
-    const plans = await buildPlan(manifest, args.command, finalHarnesses, scope, process.cwd());
+    const plans = await buildPlan(activeManifest, args.command, finalHarnesses, scope, process.cwd());
     displayPlan(plans);
 
     // Validate keychain references (before confirmation)
     let hasMissingKeychain = false;
-    if (args.command === "add" && !args.skipKeychainCheck && Object.keys(manifest.mcps).length > 0) {
-      const { missing, platformWarning } = await validateKeychainRefsStructured(manifest.mcps);
+    if (args.command === "add" && !args.skipKeychainCheck && Object.keys(activeManifest.mcps).length > 0) {
+      const { missing, platformWarning } = await validateKeychainRefsStructured(activeManifest.mcps);
       hasMissingKeychain = displayKeychainWarnings(missing, platformWarning);
 
       // In --yes (CI) mode, fail if keychain items are missing
@@ -552,8 +588,8 @@ export async function main(): Promise<void> {
 
     const result =
       args.command === "add"
-        ? await executeAdd(manifest, options)
-        : await executeRm(manifest, options);
+        ? await executeAdd(activeManifest, options)
+        : await executeRm(activeManifest, options);
 
     // Display execution log
     if (progressLines.length > 0) {
