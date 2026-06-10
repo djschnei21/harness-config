@@ -23,9 +23,11 @@ export const pi: HarnessAdapter = {
   },
 
   agentDir(scope: Scope): string {
+    // Pi core does not document a built-in agent directory, but the official
+    // subagent example discovers user/project agents from these paths.
     return scope === "global"
-      ? join(homedir(), ".agents", "skills")
-      : ".agents/skills";
+      ? join(homedir(), ".pi", "agent", "agents")
+      : join(".pi", "agents");
   },
 
   skillDir(scope: Scope): string {

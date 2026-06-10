@@ -1,6 +1,6 @@
 import * as p from "@clack/prompts";
 import pc from "picocolors";
-import { basename } from "node:path";
+import { basename, resolve as resolvePath } from "node:path";
 import { homedir } from "node:os";
 import { parseManifestFile, getDefaultManifestPath, ManifestParseError } from "./manifest/parse.ts";
 import { harnessNames, type HarnessName, type NormalizedManifest } from "./manifest/schema.ts";
@@ -21,6 +21,20 @@ function shortenPath(filepath: string): string {
     return "~" + filepath.slice(home.length);
   }
   return filepath;
+}
+
+/**
+ * Format a destination path with explicit scope labeling.
+ */
+export function formatScopedDestination(filepath: string, scope: Scope): string {
+  return `${pc.dim(`[${scope}]`)} ${pc.dim(shortenPath(filepath))}`;
+}
+
+/**
+ * Detect the common footgun where a project-scoped install is being run from $HOME.
+ */
+export function isProjectScopeHomeRun(scope: Scope, cwd: string, home = homedir()): boolean {
+  return scope === "project" && resolvePath(cwd) === resolvePath(home);
 }
 
 const VERSION = "0.1.0";
@@ -227,7 +241,7 @@ function displayManifestInfo(manifest: NormalizedManifest): void {
 /**
  * Display a Terraform-style execution plan for each harness.
  */
-function displayPlan(plans: HarnessPlan[]): void {
+function displayPlan(plans: HarnessPlan[], scope: Scope): void {
   for (const plan of plans) {
     const detectedHint = plan.detected ? pc.green(" \u2713 detected") : pc.dim(" (new)");
     const { toAdd, toRemove, toUpdate, noops, notFound } = summarizePlan(plan.items);
@@ -247,7 +261,7 @@ function displayPlan(plans: HarnessPlan[]): void {
     );
 
     // Item-by-item plan lines
-    const lines = plan.items.map((item) => formatPlanItem(item));
+    const lines = plan.items.map((item) => formatPlanItem(item, scope));
     if (lines.length > 0) {
       p.log.message(lines.join("\n"));
     }
@@ -257,9 +271,9 @@ function displayPlan(plans: HarnessPlan[]): void {
 /**
  * Format a single plan item as a line with prefix indicator.
  */
-function formatPlanItem(item: PlanItem): string {
+function formatPlanItem(item: PlanItem, scope: Scope): string {
   const label = `${item.type} ${pc.bold(`"${item.name}"`)}`;
-  const dest = shortenPath(item.destination);
+  const dest = formatScopedDestination(item.destination, scope);
   const overrideHint = item.overrideKeys && item.overrideKeys.length > 0
     ? `  ${pc.dim(`(+ ${item.overrideKeys.join(", ")})`)}`
     : "";
@@ -345,9 +359,9 @@ function displayResults(result: EngineResult): void {
 /**
  * Format a progress event as a line for real-time display.
  */
-function formatProgressEvent(event: ProgressEvent): string {
+function formatProgressEvent(event: ProgressEvent, scope: Scope): string {
   const label = `${event.type} ${pc.bold(`"${event.name}"`)}`;
-  const dest = shortenPath(event.path);
+  const dest = formatScopedDestination(event.path, scope);
 
   switch (event.action) {
     case "added":
@@ -411,9 +425,37 @@ export async function main(): Promise<void> {
     return;
   }
 
-  const scope: Scope = args.global ? "global" : "project";
-  const scopeSuffix = args.global ? pc.dim(" \u2500\u2500 global") : "";
-  p.intro(pc.bgCyan(pc.black(` harness-config ${args.command} `)) + scopeSuffix);
+  let scope: Scope = args.global ? "global" : "project";
+  const initialScopeSuffix = pc.dim(` \u2500\u2500 ${scope}`);
+  p.intro(pc.bgCyan(pc.black(` harness-config ${args.command} `)) + initialScopeSuffix);
+
+  if (isProjectScopeHomeRun(scope, process.cwd())) {
+    const action = args.command === "add" ? "install" : "remove";
+    const message =
+      `You are running from ${pc.bold("$HOME")} without ${pc.bold("--global")}. ` +
+      `Project scope here writes to repo-local-style paths under ${pc.bold("~")}, which can be mistaken for global Pi config. ` +
+      `Switch to a global ${action} instead?`;
+
+    if (args.yes) {
+      p.log.warn(message);
+      scope = "global";
+      p.log.step(`Defaulting to ${pc.bold("global")} scope in non-interactive mode.`);
+    } else {
+      p.log.warn(message);
+      const switchToGlobal = await p.confirm({
+        message: `Switch to ${pc.bold("global")} scope instead?`,
+        initialValue: true,
+      });
+      if (p.isCancel(switchToGlobal)) {
+        p.cancel("Operation cancelled.");
+        process.exit(0);
+      }
+      if (switchToGlobal) {
+        scope = "global";
+        p.log.step(`Switched to ${pc.bold("global")} scope.`);
+      }
+    }
+  }
 
   try {
     // Resolve manifest path — may involve discovery if a directory/repo is given
@@ -534,7 +576,7 @@ export async function main(): Promise<void> {
 
     // Build and display execution plan
     const plans = await buildPlan(activeManifest, args.command, finalHarnesses, scope, process.cwd());
-    displayPlan(plans);
+    displayPlan(plans, scope);
 
     // Validate keychain references (before confirmation)
     let hasMissingKeychain = false;
@@ -575,7 +617,7 @@ export async function main(): Promise<void> {
     const progressLines: string[] = [];
     const onProgress = (event: ProgressEvent) => {
       if (event.action !== "unchanged" && event.action !== "skipped") {
-        progressLines.push(formatProgressEvent(event));
+        progressLines.push(formatProgressEvent(event, scope));
       }
     };
 

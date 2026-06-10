@@ -151,13 +151,17 @@ describe("harness config paths", () => {
   });
 
   it("Pi supports agents", () => {
-    expect(pi.agentDir("project")).toBe(".agents/skills");
+    expect(pi.agentDir("project")).toBe(".pi/agents");
+    expect(pi.agentDir("global")).toContain(".pi");
+    expect(pi.agentDir("global")).toContain("agents");
     expect(pi.supportsAgents).toBe(true);
   });
 
   it("Pi skill dir is .pi/skills", () => {
-    expect(pi.skillDir("project")).toContain(".pi");
-    expect(pi.skillDir("project")).toContain("skills");
+    expect(pi.skillDir("project")).toBe(".pi/skills");
+    expect(pi.skillDir("global")).toContain(".pi");
+    expect(pi.skillDir("global")).toContain("agent");
+    expect(pi.skillDir("global")).toContain("skills");
   });
 });
 

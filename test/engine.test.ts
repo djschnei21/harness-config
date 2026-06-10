@@ -174,6 +174,8 @@ You are a software architect.`;
       const result = await executeAdd(manifest, { scope: "project", cwd: tmpDir });
       expect(result.results[0].agents).toHaveLength(1);
       expect(result.results[0].agents[0].name).toBe("test.md");
+      const installed = await readFile(join(tmpDir, ".pi", "agents", "test.md"), "utf-8");
+      expect(installed).toContain("Body");
     });
 
     it("detects unchanged agents and skips write", async () => {

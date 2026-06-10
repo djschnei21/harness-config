@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { parseArgs, buildHarnessPickerOptions, computeCiHarnessTargets } from "../src/cli.ts";
+import { parseArgs, buildHarnessPickerOptions, computeCiHarnessTargets, formatScopedDestination, isProjectScopeHomeRun } from "../src/cli.ts";
 import { clearDetectionCache, seedDetectionCache } from "../src/harnesses/index.ts";
 import { harnessNames } from "../src/manifest/schema.ts";
 
@@ -95,6 +95,24 @@ describe("CLI argument parsing", () => {
     expect(result.harnesses).toEqual(["claude", "opencode"]);
     expect(result.global).toBe(true);
     expect(result.yes).toBe(true);
+  });
+});
+
+describe("scope helpers", () => {
+  it("labels project destinations explicitly", () => {
+    expect(formatScopedDestination(".pi/skills/demo", "project")).toContain("[project]");
+    expect(formatScopedDestination(".pi/skills/demo", "project")).toContain(".pi/skills/demo");
+  });
+
+  it("labels global destinations explicitly", () => {
+    expect(formatScopedDestination("/Users/test/.pi/agent/skills/demo", "global")).toContain("[global]");
+    expect(formatScopedDestination("/Users/test/.pi/agent/skills/demo", "global")).toContain(".pi/agent/skills/demo");
+  });
+
+  it("detects project-scoped runs from $HOME", () => {
+    expect(isProjectScopeHomeRun("project", "/Users/test", "/Users/test")).toBe(true);
+    expect(isProjectScopeHomeRun("global", "/Users/test", "/Users/test")).toBe(false);
+    expect(isProjectScopeHomeRun("project", "/Users/test/work", "/Users/test")).toBe(false);
   });
 });
 
