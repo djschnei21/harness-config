@@ -39,6 +39,7 @@ export const harnessNames = [
   "opencode",
   "copilot",
   "pi",
+  "bob",
 ] as const;
 
 export type HarnessName = (typeof harnessNames)[number];

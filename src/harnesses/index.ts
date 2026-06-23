@@ -5,6 +5,7 @@ import { claude } from "./claude.ts";
 import { opencode } from "./opencode.ts";
 import { copilot } from "./copilot.ts";
 import { pi } from "./pi.ts";
+import { bob } from "./bob.ts";
 
 export { type HarnessAdapter, type Scope } from "./types.ts";
 export { parseStdioCommand, resolveEnvItems, buildHeaders, hasKeychainEnvRefs, isStdio } from "./mcp-util.ts";
@@ -14,6 +15,7 @@ const registry: Record<HarnessName, HarnessAdapter> = {
   opencode,
   copilot,
   pi,
+  bob,
 };
 
 /**

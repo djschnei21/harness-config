@@ -10,6 +10,7 @@
 - GitHub Copilot (VS Code, copilot CLI, etc.)
 - OpenCode
 - Pi
+- IBM Bob
 
 ## Quick Start
 
@@ -127,7 +128,7 @@ harness-config rm [manifest-path] [options]
 
 | Flag | Description |
 |------|-------------|
-| `--harness <name>` | Target harness (repeatable: claude, opencode, copilot, pi) |
+| `--harness <name>` | Target harness (repeatable: claude, opencode, copilot, pi, bob) |
 | `--global`, `-g` | Write to global configs instead of project |
 | `--yes`, `-y` | Skip confirmation prompts |
 | `--help`, `-h` | Show help |

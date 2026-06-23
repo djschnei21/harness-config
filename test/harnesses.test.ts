@@ -3,6 +3,7 @@ import { claude } from "../src/harnesses/claude.ts";
 import { opencode } from "../src/harnesses/opencode.ts";
 import { copilot } from "../src/harnesses/copilot.ts";
 import { pi } from "../src/harnesses/pi.ts";
+import { bob } from "../src/harnesses/bob.ts";
 import { isHarnessDetected, isBinaryInstalled, clearDetectionCache } from "../src/harnesses/index.ts";
 import type { McpDef } from "../src/manifest/schema.ts";
 
@@ -130,6 +131,35 @@ describe("harness MCP translation", () => {
       });
     });
   });
+
+  describe("IBM Bob", () => {
+    it("translates stdio MCP with command/args", () => {
+      const result = bob.translateMcp("fetch", stdioMcp);
+      expect(result).toEqual({
+        command: "npx",
+        args: ["-y", "@anthropic/mcp-fetch"],
+        env: { HTTP_PROXY: "${env:HTTP_PROXY}" },
+      });
+    });
+
+    it("translates HTTP MCP with type:streamable-http", () => {
+      const result = bob.translateMcp("github", httpMcp);
+      expect(result).toEqual({
+        type: "streamable-http",
+        url: "https://api.githubcopilot.com/mcp/",
+        headers: { Authorization: "Bearer ${env:GH_TOKEN}" },
+      });
+    });
+
+    it("uses wrapper path when provided", () => {
+      const result = bob.translateMcp("fetch", stdioMcp, "/home/user/.harness-config/wrappers/fetch.sh");
+      expect(result).toEqual({
+        command: "/home/user/.harness-config/wrappers/fetch.sh",
+        args: [],
+        env: { HTTP_PROXY: "${env:HTTP_PROXY}" },
+      });
+    });
+  });
 });
 
 describe("harness config paths", () => {
@@ -159,6 +189,26 @@ describe("harness config paths", () => {
     expect(pi.skillDir("project")).toContain(".pi");
     expect(pi.skillDir("project")).toContain("skills");
   });
+
+  it("Bob project MCP path is .bob/mcp.json", () => {
+    expect(bob.mcpConfigPath("project")).toContain(".bob");
+    expect(bob.mcpConfigPath("project")).toContain("mcp.json");
+  });
+
+  it("Bob global MCP path is ~/.bob/mcp_settings.json", () => {
+    expect(bob.mcpConfigPath("global")).toContain(".bob");
+    expect(bob.mcpConfigPath("global")).toContain("mcp_settings.json");
+  });
+
+  it("Bob does not support drop-in agents", () => {
+    expect(bob.agentDir("project")).toBeNull();
+    expect(bob.supportsAgents).toBe(false);
+  });
+
+  it("Bob skill dir is .bob/skills", () => {
+    expect(bob.skillDir("project")).toContain(".bob");
+    expect(bob.skillDir("project")).toContain("skills");
+  });
 });
 
 describe("harness detection", () => {
@@ -186,6 +236,10 @@ describe("harness detection", () => {
 
     it("Copilot checks for 'copilot' OR 'code' binary", () => {
       expect(copilot.binaryNames).toEqual(["copilot", "code"]);
+    });
+
+    it("Bob checks for 'bob' binary", () => {
+      expect(bob.binaryNames).toEqual(["bob"]);
     });
   });
 

@@ -11,14 +11,14 @@ import { mergeAgentOverrides } from "../util/frontmatter.ts";
  * Agent frontmatter field support by harness.
  */
 const FIELD_SUPPORT: Record<string, Record<HarnessName, boolean>> = {
-  name: { claude: true, opencode: true, copilot: true, pi: true },
-  description: { claude: true, opencode: true, copilot: true, pi: true },
-  model: { claude: true, opencode: true, copilot: false, pi: false },
-  temperature: { claude: true, opencode: true, copilot: false, pi: false },
-  mode: { claude: false, opencode: true, copilot: false, pi: false },
-  color: { claude: false, opencode: true, copilot: false, pi: false },
-  tools: { claude: true, opencode: true, copilot: true, pi: false },
-  permission: { claude: false, opencode: true, copilot: false, pi: false },
+  name: { claude: true, opencode: true, copilot: true, pi: true, bob: false },
+  description: { claude: true, opencode: true, copilot: true, pi: true, bob: false },
+  model: { claude: true, opencode: true, copilot: false, pi: false, bob: false },
+  temperature: { claude: true, opencode: true, copilot: false, pi: false, bob: false },
+  mode: { claude: false, opencode: true, copilot: false, pi: false, bob: false },
+  color: { claude: false, opencode: true, copilot: false, pi: false, bob: false },
+  tools: { claude: true, opencode: true, copilot: true, pi: false, bob: false },
+  permission: { claude: false, opencode: true, copilot: false, pi: false, bob: false },
 };
 
 /**
