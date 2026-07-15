@@ -1,4 +1,6 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { platform } from "node:os";
 import type { HarnessName } from "../manifest/schema.ts";
 import type { HarnessAdapter } from "./types.ts";
 import { claude } from "./claude.ts";
@@ -52,7 +54,8 @@ export function isBinaryInstalled(binaryName: string): boolean {
   }
   let found: boolean;
   try {
-    execSync(`which ${binaryName}`, { stdio: "ignore" });
+    const lookup = platform() === "win32" ? "where.exe" : "which";
+    execFileSync(lookup, [binaryName], { stdio: "ignore" });
     found = true;
   } catch {
     found = false;
@@ -66,7 +69,16 @@ export function isBinaryInstalled(binaryName: string): boolean {
  * Returns true if ANY of the adapter's binaryNames are found on PATH.
  */
 export function isHarnessDetected(adapter: HarnessAdapter): boolean {
-  return adapter.binaryNames.some((bin) => isBinaryInstalled(bin));
+  return adapter.binaryNames.some((bin) => isBinaryInstalled(bin)) ||
+    (adapter.detectionPaths?.some((path) => isDetectionPathInstalled(path)) ?? false);
+}
+
+function isDetectionPathInstalled(path: string): boolean {
+  const cacheKey = `path:${path}`;
+  if (detectionCache.has(cacheKey)) return detectionCache.get(cacheKey)!;
+  const found = existsSync(path);
+  detectionCache.set(cacheKey, found);
+  return found;
 }
 
 /**
